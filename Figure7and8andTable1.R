@@ -1,3 +1,14 @@
+###########################################################################
+
+#(TO ONLY RUN ONCE) To install the GEOquery and also install BiocManager 
+# and Biobase required for GEOquery (if not installed yet) 
+
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("Biobase")
+BiocManager::install("GEOquery")
+###########################################################################
+
 library(nlme)
 library(reshape2)
 library(Hmisc)
@@ -5,21 +16,20 @@ library(GEOquery)
 library(ggplot2)
 
 # Obtaining the raw data set from the GEOquery library
-
 gse30550<-getGEO('GSE30550',GSEMatrix=TRUE)
 des<-pData(phenoData(gse30550[[1]]))
 eset<-exprs(gse30550[[1]])
 
 
-#Cleaning the des (designFlu) dataset QE
-
-sub<-substr(des$title,9,10)  # generate sub column with only the 9 to 10 characters of the orginal data column
+#Extracting key sample info from experimental design file (des) dataset 
+sub<-substr(des$title,9,10)  # generate subject column with only the 9 to 10 characters of the original data column
 time<-substr(des$characteristics_ch1.1,15,18) # generate time column with only the 17 to 18 characters of the original data column
-cond<-substr(des$characteristics_ch1.3,15,19) # generate cond column with the 17 to 18 characters of the original data column
+cond<-substr(des$characteristics_ch1.3,15,19) # generate symptom condition column with the 17 to 18 characters of the original data column
 Array<-1:268 # generate array column with an index from 1:268
 columnname<-rownames(des)
-#time=as.numeric(time)
 time2=time
+
+#Creating new "clean" design file (des)
 des<-data.frame(sub,time,cond,Array,columnname,time2) # create the new des data set
 des[,2]<- sub("line","-12",as.character(des[,2])) # replace ne with -1 (representing the baseline )
 des[,3]<- sub("t","",as.character(des[,3])) #delete t from column 
@@ -28,25 +38,22 @@ des$time=as.numeric(des$time)
 des$time2=as.numeric(des$time2)
 
 
-#it is important before running any code to check to make sure that the following are true
-#correct it if it is not.
+#It is important before analysis to check to make sure that the following are true
+# and correct it if it is not.
 #
 # 1.  To be safe make sure that eset is a matrix of numbers and that 
 #  the matrix has row name id's.  Sometimes the first column will have the row ids.
 # 
-# 2.  After adressing one, make sure that the expression values are on the log scale.
-#    Just check if there are any values in the hundreds and thousands.  If so it needs
-#    to be log2 transformed.
+# 2.  After addressing #1, make sure that the expression values are on the log scale.
+#    Just check if there are any values in the thousands.  If so it needs
+#    to be log2 transformed. Check documentation from GEO as well.
 #
 # 3. Make sure the colnames of eset match up with the des$columnname in des.
-# 4. Make sure that cond,time, and sub are factors in des.  Time2 should be numeric.
+#
+# 4. The order of the columns in eset should match the order of rows in design
 
 #Checking #1
-head(eset)
-#first column is the row id's so lets fix it.
-#rownames(eset)<-eset[,1]
-#eset<-as.matrix(eset[,-1])
-
+head(eset)  #eset is in the proper format
 
 #Checking #2
 summary(as.vector(eset))
@@ -58,34 +65,33 @@ summary(as.vector(eset))
 #Checking #3
 length(setdiff(colnames(eset),as.character(des$columnname)))
 #This should be 0, if not, then there are cols in eset that do not match 
-#in design or vice versa.  Need to fix by subsetting the two files so that they match.
+#in the design file or vice versa.  Need to fix by subsetting the two files so that they match.
 
-#Checking #4
-is.factor(des$cond)
-is.factor(des$time)
-is.factor(des$sub)
-is.numeric(des$time2)
+#Checking #4.  This data set is already ordered correctly. 
+head(cbind(colnames(eset),des$columnname))
+cbind(colnames(eset),des$columnname)
 
-#fixing variable types
-table(des$time)
-des$time<-factor(des$time)
-des$sub<-factor(des$sub)
-des$integer<-as.numeric(factor(des$time))
 
-#Sorting desing based on subject and time point.
-#First ordering everything correctly.
-#This is critical to do.
-index<-order(des$columnname)
-des<-des[index,]
-index2<-order(colnames(eset))
+
+#Final data cleaning processes
+#1. Reorder design and eset so that they are ordered by subject and time point necessary
+#   for computation of f.hat and f.bar (the correlogram visualization proposed)
+#2. Convert time and subject to factors for linear modeling purposes.
+
+#Addressing 1: (Samples are already ordered correctly but we do it here anyways for illustration)
+index2<-order(des$sub,des$time)
+des<-des[index2,]
 eset<-eset[,index2]
 
-#Ordering by subject and time point now
-index3<-order(des$sub,des$time)
-des<-des[index3,]
-eset<-eset[,index3] # ?? NOT RUNNING NOT SURE WHAT IS THAT DOING
+#Addressing 2
+des$time<-factor(des$time)
+des$sub<-factor(des$sub)
 
 
+
+
+
+#Computing correlation estimates and graphic
 #Initializing result to store gene level correlation estimates as a function of d_jk
 f.hat.final<-c()
 
@@ -109,21 +115,18 @@ for(i in 1:11961){
 #Computing emperical correlation estimates across all genes
 f.bar<-aggregate(values~d,data=f.hat.final,mean)
 
-
 #Plotting Figure 7  Emperical correlation function of the flu data set
 f.bar<-f.bar[-1,]  #Removing d_jk=0
-#graph without the curve
+#graph without the loess curve (not in paper)
 fig.7a<-ggplot(f.bar,aes(x=d,y=values))+geom_point()+labs(x=expression(d[jk]),y=expression(f(d[jk])))+
   ylim(0,0.75)+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
 
-#graph with the curve
+#graph with loess curve
 fig.7b<-ggplot(f.bar,aes(x=d,y=values))+geom_point()+labs(x=expression(d[jk]),y=expression(f(d[jk])))+geom_smooth(span=1.5)+
   ylim(0,0.75)+theme_bw()+theme(plot.title = element_text(hjust = 0.5))
 
 
-
 png("Figure7.png", width = 5, height = 3.75, units="in", res=2400)
-#fig.7a
 fig.7b
 dev.off()
 
@@ -134,7 +137,6 @@ dev.off()
 
 #Creating Figure 8.  Fitting sphercial correlation function to the empirical estimates 
 #via nonlinear least squares.
-
 
 #Obtaining least squares estimates using the spherical correlation function
 f1<- values~ifelse(rho1>d,(1-rho2-nugget)*(1-1.5*d/rho1+0.5*(d/rho1)^3)+rho2,rho2) 
@@ -151,21 +153,26 @@ spher<-function(d,rho1,rho2,nugget){
   return(result)
 }
 
-
-
 png("Figure8.png", width = 5, height = 3.75, units="in", res=2400)
+
 init.start<-list(rho=f.bar$values[1]^(1/5))
+#Nonlinear fit for AR parameter estimate
 arfit<-nls(values~ rho^(d),data=f.bar,start=init.start)
+#Using intercept only model for CS parameter estimate
 csfit<-lm(values~ 1,data=f.bar)
+#Plotting the points
 plot(f.bar$d,f.bar$values,ylim=c(0,.75),pch=1,cex=0.4,ylab=expression(Correlation~~f(d[jk])),xlab=expression(d[jk]))
 index<-0:120
-lines(index,spher(index,rho1=10.4713871 ,rho2=0.32198904,nugget=0.2548449),lwd=3,lty="dotted")
+#Overlaying correlation function fits
+lines(index,spher(index,rho1=10.7705836 ,rho2=0.3107967,nugget=.2532736),lwd=3,lty="dotted")
 lines(index,0.9659633^(index),lwd=3,lty="twodash")
 abline(h=coef(csfit),lwd=3,lty="solid")
+#Adding legend
 legend("topright", legend=c("CS", "AR","SPH"),lty=c("solid","twodash", "dotted"),cex=1,text.font=4,lwd=3)
 dev.off()
 
-#MSE estimates and AIC
+
+#MSE estimates and AIC comparing correlation structure fits
 summary(spherfit)$sigma^2
 summary(arfit)$sigma^2
 summary(csfit)$sigma^2
@@ -174,38 +181,44 @@ AIC(spherfit)
 AIC(arfit)
 AIC(csfit)
 
+
+
 #############################################
 #Table 1
 #
 #Applying the spherical fit to perform a genearlized linear model to determine difference over 
 #time for Asymptomatic and Symptomatic groups
 #
-#
+#Since for this demonstration we want to compare each time point to baseline
+#we will drop the data associated with HR12 so that the intercept of the model is associated with HR0
+#This allows us to easily gather t-test and p-values for each comparison using summary() rather than
+#writing individaul contrasts for the many many comparisons explored.
 
-#Removing the -12 basline values 
-index4<-which(des$time2==-12)
-des<-des[-index4,]
-eset<-eset[,-index4]
+#Removing the -12 baseline values 
+index3<-which(des$time2==-12)
+des<-des[-index3,]
+eset<-eset[,-index3]
 des$sub<-factor(des$sub)
 des$integer<-as.numeric(factor(des$time))
 
 
 
+#Creating custom correlation function estimate to incorporate inside
+#of gls()
 djk<-as.vector(dist(unique(des$time2)))
 fit.vals<-spher(djk,rho1=10.7705836 ,rho2=0.3107967,nugget=0.2532736)
 custom.spher <- corSymm(value =fit.vals,
                         form = ~ integer | sub, fixed=TRUE)
 custom.spher.init <- Initialize(custom.spher, data = des)
-#corMatrix(custom.spher.init)  This line allows the user to see each subjects Correlation matrix as specified by the spherical correlation fit.
 
 
 
 
 #On rare occasions, the gls model (using REML) may fail to converge, typically when fitting AR 
-#or GAUS structures. We simply note them with a warning when they occur and move forward in the
-#simulation loop.
+#or GAUS structures. We provide additional code to note them with a warning when they occur and move forward in the
+#simulation loop.  We did not experience any issues for this particular data set.
 
-#The following loop performs the the three generalized least squares models using the SPH, AR, and CS
+#The following loop performs the  three generalized least squares models using the SPH, AR, and CS
 #structures.  The parameters for each correlation function were determined by the nonlinear least squares
 #fits obtained in the code above when producing Figure 8.
 
@@ -223,13 +236,11 @@ result.ar<-c()       #Object to store p-values for comparing HrX -Hr0 for Symp a
 result.cs<-c()
 
 for (i in 1:11961){
-  #des<-data.frame(time=rep(n.time,n.sub),sub=paste("S",rep(1:n.sub,each=length(n.time)),sep=""))
-  #des$time2<-des$time
-  #des$time<-factor(paste("T",des$time,sep=""))
+  #Adding gene i to design file for modeling
   des$y<-eset[i,]
-  #eset<-rbind(eset,des$y)
+  
+  #Making Symp group the reference group
   des$cond<-factor(as.character(des$cond),levels=c("Symp","Asymp"))
-
   
   tryCatch({
     spher<-gls(model = y~ time+cond+time:cond, data = des, correlation = custom.spher.init,control = glsControl(opt = "optim")) 
@@ -237,6 +248,7 @@ for (i in 1:11961){
     cs<-gls(model = y~ time+cond+time:cond, data = des, correlation = corCompSymm(value=coef(csfit),form = ~1|sub,fixed=T),control = glsControl(opt = "optim")) #value=coef(csfit),
   },error=function(e){cat("Warning: Row",i,"\n")})
   
+  #Making Asymp group the reference group
   des$cond<-factor(as.character(des$cond),levels=c("Asymp","Symp"))
   tryCatch({
     spher2<-gls(model = y~ time+cond+time:cond, data = des, correlation = custom.spher.init,control = glsControl(opt = "optim")) 
@@ -252,47 +264,27 @@ for (i in 1:11961){
   
 }
 
+#Computing FRD adjusted p-values for each comparison
 adjp.spher<-apply(result.spher,2,p.adjust,method="fdr")
 adjp.ar<-apply(result.ar,2,p.adjust,method="fdr")
 adjp.cs<-apply(result.cs,2,p.adjust,method="fdr")
 
+#Computing the number of rejected test using FDR adjustment (p-value<.1)
 rejected.spher<-apply(adjp.spher<.1,2,sum)
 rejected.ar<-apply(adjp.ar<.1,2,sum)
 rejected.cs<-apply(adjp.cs<.1,2,sum)
 
-cbind(rejected.spher,rejected.cs,rejected.ar)
-
+#Creating final result table in paper
 table.1<-data.frame(Comparison=paste("HR",unique(des$time2)[-(1:1)],"-Base",sep=""),
-                    SympSPHER=rejected.spher[1:15],
-                    SympAR=rejected.ar[1:15],
-                    SympCS=rejected.cs[1:15],
-                    AsympSPH=rejected.spher[16:30],
-                    AsympAR=rejected.ar[16:30],
-                    AsympCS=rejected.cs[16:30])
+                    SympSPHER=rejected.spher[1:14],
+                    SympAR=rejected.ar[1:14],
+                    SympCS=rejected.cs[1:14],
+                    AsympSPH=rejected.spher[15:28],
+                    AsympAR=rejected.ar[15:28],
+                    AsympCS=rejected.cs[15:28])
 
 View(table.1)
-
 write.csv(table.1,file="Table1.csv")
-
-
-#For curious readers and reviewers.  The significant genes in the Spher model are almost always contined within
-#the gene lists of the AR model.  The Spher model just has additional significant genes.
-counts.spher<- adjp.spher<.1
-counts.ar<- adjp.ar<.1
-
-common<-c()
-for (i in 1:26){
-  common[i]<-length(intersect(which(counts.spher[,i]==TRUE), which(counts.ar[,i]==TRUE)))
-}
-
-CommonGenes<-data.frame(Comparison=paste("HR",unique(des$time2)[-(1:2)],"-Base",sep=""),
-                        Symp=common[1:14],
-                        Asymp=common[15:28])
-
-View(CommonGenes)
-
-
-write.csv(CommonGenes,file="CommonGenes.csv")
 
 
 
