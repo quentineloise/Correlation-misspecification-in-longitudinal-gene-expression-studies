@@ -1,7 +1,7 @@
 library(nlme)
 library(mvtnorm)
 library(ggplot2)
-#library(lsmeans)
+library(asbio)
 library(reshape2)
 library(Hmisc)
 
